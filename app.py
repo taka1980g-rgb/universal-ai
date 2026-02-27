@@ -46,9 +46,11 @@ except Exception:
     st.stop()
 genai.configure(api_key=MY_API_KEY.strip())
 
-# === 🧹 音声読み上げ用テキストクリーナー ===
+# === 🧹 音声読み上げ用テキストクリーナー（アスタリスク・不要なアポストロフィを削除） ===
 def clean_text_for_tts(text):
-    text = re.sub(r'[*_#]', '', text)
+    # Markdownの記号(*, _, #, ~)を完全に削除
+    text = re.sub(r'[*_#~]', '', text)
+    # 単語を囲むアポストロフィや引用符だけを削除（It's のような単語内のアポストロフィは残す）
     text = re.sub(r"(?<!\w)['\"]|['\"](?!\w)", '', text)
     return text.strip()
 
@@ -94,6 +96,7 @@ with st.sidebar:
     start_button = st.button("▶️ 会話をスタート", type="primary", use_container_width=True)
     end_button = st.button("🛑 終了して評価をもらう", use_container_width=True)
 
+    # 📊 進捗ダッシュボード（簡易）
     st.markdown("---")
     st.write("📊 **今日の学習記録**")
     if "stats_turns" not in st.session_state:
@@ -102,7 +105,7 @@ with st.sidebar:
     st.write(f"- 発話ターン数: {st.session_state.stats_turns} 回")
     st.write(f"- リピート練習: {st.session_state.stats_mistakes} 回")
 
-# === 🤖 AIへの絶対的な指示書（★お漏らし防止のフォーマット改修） ===
+# === 🤖 AIへの絶対的な指示書（★お漏らし防止・パターンCの追加でガチガチに強化） ===
 system_instruction = f"""
 あなたは英会話のロールプレイング相手です。
 【相手の役柄】: {questioner}
@@ -116,22 +119,28 @@ system_instruction = f"""
 1. あなたの出力は、以下の「指定フォーマット」のブロックのみで構成してください。
 2. 「はい、承知しました」などの会話のシステム的な前置きは絶対に出力しないでください。
 3. 英文中で単語を強調する際は、アポストロフィ（' '）やダブルクォーテーション（" "）を使わず、必ずMarkdownの太字（**単語**）を使用してください。
-4. 【重要】フォーマット内の「（ここに〇〇を書く）」といった指示文の括弧そのものは絶対に出力せず、中身のテキストだけを出力してください。
+4. 【重要】指定フォーマット内の括弧（ ）は説明書きです。出力する際は括弧そのものを削除し、中身のテキストだけを出力してください。
 
-【指定フォーマット】※以下のどちらかのパターンのみを出力すること
+【指定フォーマット】※以下のA・B・Cのいずれかのパターンのみを出力すること。
 
 ▼ パターンA：ユーザーの英語にミス・不自然さがある場合（リピート練習）
 [フィードバック]
 - （日本語でのミスの指摘と解説）
-- 和訳: （リピート練習用英文の日本語訳）
+- 和訳: （すぐ下の[リピート練習]の英文の日本語訳）
 [リピート練習]
 （ユーザーが復唱するための、正しい英語のセリフのみ。記号は使わない）
 
-▼ パターンB：ユーザーの英語が自然、または会話の開始・やり直し時（通常進行）
+▼ パターンB：ユーザーの英語が自然、または会話の開始時（通常進行）
 [フィードバック]
 - （日本語で短く褒める、または相槌）
 [英語の質問]
 （役柄としてユーザーに投げかける英語のセリフや質問文のみ）
+
+▼ パターンC：ユーザーから「今の質問をもう一度言って」と頼まれた場合（やり直し）
+[フィードバック]
+- （日本語で「もう一度言いますね」と短く返事）
+[英語の質問]
+（直前と全く同じ英語の質問文）
 """
 
 if "last_played_msg_idx" not in st.session_state:
@@ -158,7 +167,7 @@ if start_button:
 if "chat_session" in st.session_state:
     for i, message in enumerate(st.session_state.messages):
         if message["role"] == "user" and message["content"].startswith("（"):
-            continue
+            continue 
             
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -172,6 +181,7 @@ if "chat_session" in st.session_state:
                     
                 if raw_text:
                     try:
+                        # ★ 音声クリーナーを通す
                         speak_text = clean_text_for_tts(raw_text)
                         tts = gTTS(text=speak_text, lang='en')
                         fp = io.BytesIO()
@@ -189,7 +199,9 @@ if "chat_session" in st.session_state:
 
     st.markdown("---")
     
+    # === 通信量節約機能（スマート・トリミング） ===
     def get_trimmed_history():
+        # 直近8メッセージ（4往復）だけを抽出してAPI節約
         raw_history = st.session_state.messages[-8:] if len(st.session_state.messages) > 8 else st.session_state.messages
         formatted = []
         for m in raw_history:
@@ -200,6 +212,7 @@ if "chat_session" in st.session_state:
     display_prompt = None
     last_msg = st.session_state.messages[-1] if len(st.session_state.messages) > 0 else None
     
+    # 状態判定
     is_practice = False
     target_practice_text = ""
     if last_msg and last_msg["role"] == "assistant" and "[リピート練習]" in last_msg["content"]:
@@ -209,21 +222,23 @@ if "chat_session" in st.session_state:
     # ＝＝＝ 🔄 リピート練習モード ＝＝＝
     if is_practice:
         st.info("🔄 **リピート練習モード**：マイクで発音してみましょう。")
-        practice_audio = st.audio_input("発音をチェックする")
+        practice_audio = st.audio_input("発音を録音する")
         
+        # ★暴走防止：送信ボタンでの実行に変更
         if practice_audio:
-            with st.spinner("AIが発音を判定中..."):
-                try:
-                    transcriber = genai.GenerativeModel(selected_model)
-                    res = transcriber.generate_content([{"mime_type": "audio/wav", "data": practice_audio.getvalue()}, "英語を文字起こししてください。文字のみ出力。"])
-                    user_spoken = res.text.strip() if res.parts else ""
-                    st.write(f"🎤 あなたの発音: **{user_spoken}**")
-                    
-                    judge_model = genai.GenerativeModel(selected_model)
-                    judge_res = judge_model.generate_content(f"お手本:「{target_practice_text}」\n発音:「{user_spoken}」\n一言一句同じか厳格に判定し、違いがあれば日本語で1文で指摘してください。")
-                    st.success(f"🤖 判定: {judge_res.text.strip()}")
-                except Exception:
-                    st.error("聞き取れませんでした。もう一度お願いします。")
+            if st.button("🤖 AIに発音を判定してもらう", use_container_width=True):
+                with st.spinner("AIが発音を判定中..."):
+                    try:
+                        transcriber = genai.GenerativeModel(selected_model)
+                        res = transcriber.generate_content([{"mime_type": "audio/wav", "data": practice_audio.getvalue()}, "英語を文字起こししてください。文字のみ出力。"])
+                        user_spoken = res.text.strip() if res.parts else ""
+                        st.write(f"🎤 あなたの発音: **{user_spoken}**")
+                        
+                        judge_model = genai.GenerativeModel(selected_model)
+                        judge_res = judge_model.generate_content(f"お手本:「{target_practice_text}」\n発音:「{user_spoken}」\n一言一句同じか厳格に判定し、違いがあれば日本語で1文で指摘してください。")
+                        st.success(f"🤖 判定: {judge_res.text.strip()}")
+                    except Exception:
+                        st.error("聞き取れませんでした。もう一度お願いします。")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -246,27 +261,34 @@ if "chat_session" in st.session_state:
     # ＝＝＝ 🗣️ 通常モード ＝＝＝
     else:
         st.write("🗣️ **あなたのターン**")
+        
+        if st.button("🔄 今の質問をもう一度聞く（別の言い方で答え直したい時など）"):
+            prompt = "すみません、あなたの今の質問にもう一度別の言い方で答えたいので、全く同じ質問文をもう一度言ってください。新しい質問はしないでください。"
+            display_prompt = "（🔄 今の質問をもう一度繰り返してください）"
 
-        audio_value = st.audio_input("マイクを押して回答を録音・送信")
+        # ★暴走防止：送信ボタンでの実行に変更
+        audio_value = st.audio_input("マイクを押して回答を録音")
         if audio_value:
-            with st.spinner("文字に変換中..."):
-                try:
-                    transcriber = genai.GenerativeModel(selected_model)
-                    res = transcriber.generate_content([{"mime_type": "audio/wav", "data": audio_value.getvalue()}, "英語を文字起こししてください。文字のみ出力。"])
-                    if res.parts:
-                        prompt = res.text.strip()
-                        display_prompt = prompt
-                        st.session_state.stats_turns += 1
-                except Exception:
-                    st.error("聞き取れませんでした。")
+            if st.button("📤 この音声を文字起こしして送信する", type="primary", use_container_width=True):
+                with st.spinner("文字に変換中..."):
+                    try:
+                        transcriber = genai.GenerativeModel(selected_model)
+                        res = transcriber.generate_content([{"mime_type": "audio/wav", "data": audio_value.getvalue()}, "英語を文字起こししてください。文字のみ出力。"])
+                        if res.parts:
+                            prompt = res.text.strip()
+                            display_prompt = prompt
+                            st.session_state.stats_turns += 1
+                    except Exception:
+                        st.error("聞き取れませんでした。")
 
         st.markdown("---")
         
+        # 🛠️ お助けツール群
         with st.container(border=True):
             st.write("🛠️ **お助けツール（※会話は進みません）**")
             current_q = last_msg["content"].split("[英語の質問]")[1].strip() if last_msg and "[英語の質問]" in last_msg["content"] else ""
 
-            # ★変更点：リスニングクイズのプロンプトを「極めて簡潔・前置き禁止」に書き換え
+            # 🎧 クイズ機能（★前置き禁止・超簡略化プロンプト）
             if current_q:
                 with st.expander("🎧 リスニング確認クイズ"):
                     if "quiz" not in st.session_state.tool_cache:
@@ -276,7 +298,7 @@ if "chat_session" in st.session_state:
                                 quiz_prompt = f"""
                                 以下の英語セリフに対するリスニング3択クイズを作成してください。
                                 【厳守事項】
-                                ・「はい、作成します」などの前置きや、解説は絶対に出力しないこと。
+                                ・「はい、作成します」などの前置きや、解説は【絶対】に出力しないこと。
                                 ・問題文と選択肢は1文で極力短くシンプルにすること。
                                 
                                 セリフ: {current_q}
@@ -325,7 +347,7 @@ if "chat_session" in st.session_state:
                 prompt = "（今の質問の意図がわかりません。新しい質問はせず、【パターンA】の形式で、自然な回答例の解説と和訳、そしてリピート練習用の回答例を提示してください。）"
                 display_prompt = "（🏳️ ギブアップしました）"
 
-    # ＝＝＝ 送信処理 ＝＝＝
+    # ＝＝＝ 送信処理（スマートトリミング適用） ＝＝＝
     if prompt and display_prompt:
         st.session_state.messages.append({"role": "user", "content": display_prompt})
         st.session_state.tool_cache = {} 

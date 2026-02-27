@@ -5,9 +5,9 @@ import PyPDF2
 import io
 import json
 from datetime import datetime, timedelta
-import os
+import re
 
-# === 🎨 画面デザインのカスタマイズ（CSS） ===
+# === 🎨 画��デザインのカスタマイズ（CSS） ===
 st.markdown("""
     <style>
     div[data-testid="stVerticalBlockBorderWrapper"] {
@@ -31,8 +31,8 @@ if "password_correct" not in st.session_state:
     st.session_state["password_correct"] = False
 
 if not st.session_state["password_correct"]:
-    st.title("🔒 家族専用 AI英会話ver2　テスト中")
-    pwd = st.text_input("合言葉（パスワード）を入力してください", type="password")
+    st.title("🔒 家族専用 AI英会話ver2")
+    pwd = st.text_input("合言葉（パスワード）を入力��てください", type="password")
     if pwd == APP_PASSWORD:
         st.session_state["password_correct"] = True
         st.rerun()
@@ -53,6 +53,42 @@ except Exception:
 genai.configure(api_key=MY_API_KEY.strip())
 
 st.title("My English Roleplay AI 🗣️")
+
+# ========================================================
+# 🎵 音声読み上げ用テキストクリーニング関数
+# ========================================================
+
+def clean_text_for_tts(text):
+    """
+    音声読み上げ用に Markdown 記号や��殊文字を削除
+    
+    削除対象：
+    - **テキスト** → テキスト（太字）
+    - *テキスト* → テキスト（イタリック）
+    - ***テキスト*** → テキスト（太字イタリック）
+    - _テキスト_ → テキスト
+    - __テキスト__ → テキスト
+    - `テキスト` → テキスト（コード）
+    - [テキスト](URL) → テキスト（リンク）
+    """
+    # Markdown 太字と斜体を削除
+    text = re.sub(r'\*\*\*(.*?)\*\*\*', r'\1', text)  # ***太字斜体***
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)      # **太字**
+    text = re.sub(r'\*(.*?)\*', r'\1', text)          # *斜体*
+    text = re.sub(r'___(.*?)___', r'\1', text)        # ___太字斜体___
+    text = re.sub(r'__(.*?)__', r'\1', text)          # __太字__
+    text = re.sub(r'_(.*?)_', r'\1', text)            # _斜体_
+    
+    # コード記号を削除
+    text = re.sub(r'`(.*?)`', r'\1', text)            # `コード`
+    
+    # リンクをテキスト部分だけに
+    text = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', text)   # [テキスト](URL)
+    
+    # 複数の空白を1つに統一
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
 
 # ========================================================
 # 📚 文法リファレンスデータベース（組み込み版）
@@ -222,6 +258,10 @@ with st.sidebar:
     def_sit = loaded_settings.get("situation", "例: 私の発表が終わった後の質疑応答の時間です。少し意地悪な質問をしてください。")
     def_fw = loaded_settings.get("focus_words", "")
     def_doc = loaded_settings.get("doc_text", "")
+    def_qa = loaded_settings.get("questioner_age", 35)
+    def_qg = loaded_settings.get("questioner_gender", "男性")
+    def_qp = loaded_settings.get("questioner_personality", ["フレンドリー"])
+    def_qb = loaded_settings.get("questioner_background", "")
 
     level_list = [
         "1: 超初心者（簡単な単語・短い文・ゆっくり）", 
@@ -251,15 +291,16 @@ with st.sidebar:
         questioner = preset_questioner
     
     # ★詳細ペルソナ情報
-    questioner_age = st.slider("質問者の年齢", 18, 80, 35)
-    questioner_gender = st.selectbox("質問者の性別", ["男性", "女性", "不明"])
+    questioner_age = st.slider("質問者の年齢", 18, 80, def_qa)
+    questioner_gender = st.selectbox("質問者の性別", ["男性", "女性", "不明"], index=["男性", "女性", "不明"].index(def_qg))
     questioner_personality = st.multiselect(
         "質問者の性格（複数選択可）",
         ["親友的", "厳しい", "励ましてくれる", "皮肉的", "フレンドリー", "親切"],
-        default=["フレンドリー"]
+        default=def_qp
     )
     questioner_background = st.text_input(
         "質問者の背景情報（任意）",
+        value=def_qb,
         placeholder="例：Silicon Valley のスタートアップCEO、日本在住10年"
     )
     
@@ -353,6 +394,17 @@ with st.sidebar:
             use_container_width=True
         )
 
+        # ★SRS履歴のダウンロード
+        if "mistake_bank" in st.session_state and st.session_state.mistake_bank["single_pass"]:
+            mistake_json = json.dumps(st.session_state.mistake_bank, ensure_ascii=False, indent=2)
+            st.download_button(
+                "⬇️ SRS履歴をダウンロード",
+                data=mistake_json,
+                file_name="srs_history.json",
+                mime="application/json",
+                use_container_width=True
+            )
+
         log_text = "【今日の英会話記録】\n\n"
         for msg in st.session_state.messages:
             if msg["role"] == "user" and msg["content"].startswith("（"):
@@ -361,7 +413,7 @@ with st.sidebar:
             content = msg["content"].replace("[フィードバック]", "\n[フィードバック]").replace("[英語の質問]", "\n[英語の質問]").replace("[リピート練習]", "\n[リピート練習]")
             log_text += f"{sender}:\n{content.strip()}\n\n{'='*40}\n\n"
             
-        st.download_button("📝 今日の会話記録を保存（.txt）", data=log_text, file_name="english_log.txt", mime="text/plain", use_container_width=True)
+        st.download_button("📝 今日の会話記録を���存（.txt）", data=log_text, file_name="english_log.txt", mime="text/plain", use_container_width=True)
 
 # ★変更点：システム指示にペルソナ詳細情報を組み込む
 questioner_persona = f"""
@@ -463,7 +515,10 @@ if "chat_session" in st.session_state:
                         
                     if play_text:
                         try:
-                            tts = gTTS(text=play_text, lang='en')
+                            # ★修正：Markdown 記号を削除してから音声化
+                            cleaned_play_text = clean_text_for_tts(play_text)
+                            
+                            tts = gTTS(text=cleaned_play_text, lang='en')
                             fp = io.BytesIO()
                             tts.write_to_fp(fp)
                             fp.seek(0)
@@ -517,7 +572,7 @@ if "chat_session" in st.session_state:
                             
                             上記を比較し、ユーザーがお手本と【一言一句同じ】に発音できたかを厳格に判定してください。
                             - 1単語でも違いや抜け漏れ、余計な単語があれば、容赦なく「どこが違ったか」を指摘してください。
-                            - 完璧に一致した場合のみ合格としてください。
+                            - 完璧に一致した���合のみ合格としてください。
                             - 忖度や過剰な励ましは一切不要です。日本語で簡潔に（1〜2文）出力してください。
                             """
                             judge_model = genai.GenerativeModel(selected_model)
@@ -533,7 +588,7 @@ if "chat_session" in st.session_state:
         col1, col2 = st.columns(2)
         with col1:
             if st.button("▶️ 練習完了！次へ進む", type="primary", use_container_width=True):
-                prompt = "（リピート練習を完了しました。先ほどの続きから、会話を再開するための新しい質問を英語でしてください。）"
+                prompt = "（リピート練習を完了しました。先ほどの続きから、会話を再��するための新しい質問を英語でしてください。）"
                 display_prompt = "（✅ リピート練習を完了し、次へ進みました）"
         with col2:
             if st.button("↩️ 練習せず、1つ前の質問に答え直す (Undo)", use_container_width=True):
@@ -702,7 +757,7 @@ if "chat_session" in st.session_state:
             
             if st.button("ギブアップ（解説と回答例を見て、リピート練習へ進む）"):
                 prompt = """
-                今の質問の意図がわかりません。通信量削減のため、無駄な前置きは一切省き、以下の構成で極めて簡潔に出力してください。今回は【新しい質問は行わず】、私がそのまま復唱できる回答例を提示してください。
+                今の質問の意図がわかりません。通信量削減のため、無駄な前置きは一切省き、���下の構成で極めて簡潔に出力してください。今回は【新しい質問は行わず】、私がそのまま復唱できる回答例を提示してください。
                 
                 [フィードバック]
                 - 直前の質問の英語と日本語訳
@@ -753,28 +808,20 @@ if "chat_session" in st.session_state:
                         セリフ: {eng_question}
                         
                         出力フォーマット:
-                        [問題日本語]
+                        【問題】
                         質問の内容や意図を確認する質問を日本語で記載
                         
-                        [選択肢]
+                        【選択肢】
                         A) ～
                         B) ～
                         C) ～
                         
-                        [正解]
+                        【正解】
                         A（または B, C）
                         """
                         
                         quiz_res = quiz_ai.generate_content(quiz_prompt)
-                        quiz_text = quiz_res.text
-                        
-                        # パースしやすくするために簡単に処理
-                        lines = quiz_text.split('\n')
-                        
-                        st.markdown("**クイズ問題:**")
-                        for line in lines:
-                            if line.strip() and not line.startswith('['):
-                                st.write(line)
+                        st.markdown(quiz_res.text)
                         
                     except Exception as e:
                         st.warning("クイズの作成に失敗しました。スキップしてください。")

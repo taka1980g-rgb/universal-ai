@@ -4,7 +4,7 @@ from gtts import gTTS
 import PyPDF2
 import io
 import json
-import re  # 正規表現（テキストのお掃除用）
+import re
 
 # === 🎨 画面デザインのカスタマイズ（CSS） ===
 st.markdown("""
@@ -46,11 +46,9 @@ except Exception:
     st.stop()
 genai.configure(api_key=MY_API_KEY.strip())
 
-# === 🧹 音声読み上げ用テキストクリーナー（アスタリスク・不要なアポストロフィを削除） ===
+# === 🧹 音声読み上げ用テキストクリーナー ===
 def clean_text_for_tts(text):
-    # Markdownの太字(**)や斜体(*, _)を削除
     text = re.sub(r'[*_#]', '', text)
-    # 単語を囲むアポストロフィや引用符だけを削除（It's のような単語内のアポストロフィは残す）
     text = re.sub(r"(?<!\w)['\"]|['\"](?!\w)", '', text)
     return text.strip()
 
@@ -68,7 +66,6 @@ with st.sidebar:
     setting_file = st.file_uploader("保存した設定（.json）をアップロード", type=["json"])
     loaded_settings = json.load(setting_file) if setting_file else {}
 
-    # 詳細ペルソナ設定を含む入力項目
     def_level = loaded_settings.get("level", "2: 初心者（日常会話の基礎）")
     level = st.selectbox("📈 会話のレベル", [
         "1: 超初心者（簡単な単語・短い文）", "2: 初心者（日常会話の基礎）", 
@@ -97,7 +94,6 @@ with st.sidebar:
     start_button = st.button("▶️ 会話をスタート", type="primary", use_container_width=True)
     end_button = st.button("🛑 終了して評価をもらう", use_container_width=True)
 
-    # 📊 進捗ダッシュボード（簡易）
     st.markdown("---")
     st.write("📊 **今日の学習記録**")
     if "stats_turns" not in st.session_state:
@@ -106,7 +102,7 @@ with st.sidebar:
     st.write(f"- 発話ターン数: {st.session_state.stats_turns} 回")
     st.write(f"- リピート練習: {st.session_state.stats_mistakes} 回")
 
-# === 🤖 AIへの絶対的な指示書（プロンプト・お漏らし防止の徹底） ===
+# === 🤖 AIへの絶対的な指示書（★お漏らし防止のフォーマット改修） ===
 system_instruction = f"""
 あなたは英会話のロールプレイング相手です。
 【相手の役柄】: {questioner}
@@ -118,15 +114,16 @@ system_instruction = f"""
 
 【絶対に守るべき厳格なルール】
 1. あなたの出力は、以下の「指定フォーマット」のブロックのみで構成してください。
-2. 「はい、承知しました」「もう一度言いますね」などの会話のシステム的な前置きや返事は **絶対に** 出力してはいけません。即座にブロックの記述から始めてください。
-3. 英文中で単語を強調する際は、アポストロフィ（' '）やダブルクォーテーション（" "）を絶対に使わず、必ずMarkdownの太字（**単語**）を使用してください。
+2. 「はい、承知しました」などの会話のシステム的な前置きは絶対に出力しないでください。
+3. 英文中で単語を強調する際は、アポストロフィ（' '）やダブルクォーテーション（" "）を使わず、必ずMarkdownの太字（**単語**）を使用してください。
+4. 【重要】フォーマット内の「（ここに〇〇を書く）」といった指示文の括弧そのものは絶対に出力せず、中身のテキストだけを出力してください。
 
 【指定フォーマット】※以下のどちらかのパターンのみを出力すること
 
 ▼ パターンA：ユーザーの英語にミス・不自然さがある場合（リピート練習）
 [フィードバック]
-- （日本語でミスの指摘と解説）
-- （次のリピート練習用の英文の【日本語訳】をここに必ず記載）
+- （日本語でのミスの指摘と解説）
+- 和訳: （リピート練習用英文の日本語訳）
 [リピート練習]
 （ユーザーが復唱するための、正しい英語のセリフのみ。記号は使わない）
 
@@ -140,7 +137,7 @@ system_instruction = f"""
 if "last_played_msg_idx" not in st.session_state:
     st.session_state.last_played_msg_idx = -1
 if "tool_cache" not in st.session_state:
-    st.session_state.tool_cache = {} # API節約のためのキャッシュ
+    st.session_state.tool_cache = {}
 
 if start_button:
     try:
@@ -161,7 +158,7 @@ if start_button:
 if "chat_session" in st.session_state:
     for i, message in enumerate(st.session_state.messages):
         if message["role"] == "user" and message["content"].startswith("（"):
-            continue # システム用プロンプトは画面に隠す
+            continue
             
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -175,7 +172,6 @@ if "chat_session" in st.session_state:
                     
                 if raw_text:
                     try:
-                        # ★ 音声クリーナーを通す
                         speak_text = clean_text_for_tts(raw_text)
                         tts = gTTS(text=speak_text, lang='en')
                         fp = io.BytesIO()
@@ -193,9 +189,7 @@ if "chat_session" in st.session_state:
 
     st.markdown("---")
     
-    # === 通信量節約機能（スマート・トリミング）の準備 ===
     def get_trimmed_history():
-        # 直近8メッセージ（4往復）だけを抽出してAPI節約
         raw_history = st.session_state.messages[-8:] if len(st.session_state.messages) > 8 else st.session_state.messages
         formatted = []
         for m in raw_history:
@@ -206,7 +200,6 @@ if "chat_session" in st.session_state:
     display_prompt = None
     last_msg = st.session_state.messages[-1] if len(st.session_state.messages) > 0 else None
     
-    # 状態判定
     is_practice = False
     target_practice_text = ""
     if last_msg and last_msg["role"] == "assistant" and "[リピート練習]" in last_msg["content"]:
@@ -240,7 +233,6 @@ if "chat_session" in st.session_state:
         with col2:
             if st.button("↩️ 練習せず1つ前の質問に答え直す (Undo)", use_container_width=True):
                 if len(st.session_state.messages) >= 3:
-                    # ユーザーのミスとAIの指摘を消去し、履歴をスマートトリミングして再構築
                     st.session_state.messages = st.session_state.messages[:-2]
                     st.session_state.stats_mistakes -= 1
                     
@@ -255,7 +247,6 @@ if "chat_session" in st.session_state:
     else:
         st.write("🗣️ **あなたのターン**")
 
-        # 🎤 メインの録音
         audio_value = st.audio_input("マイクを押して回答を録音・送信")
         if audio_value:
             with st.spinner("文字に変換中..."):
@@ -271,19 +262,33 @@ if "chat_session" in st.session_state:
 
         st.markdown("---")
         
-        # 🛠️ お助けツール群（API節約キャッシュ付き）
         with st.container(border=True):
             st.write("🛠️ **お助けツール（※会話は進みません）**")
             current_q = last_msg["content"].split("[英語の質問]")[1].strip() if last_msg and "[英語の質問]" in last_msg["content"] else ""
 
-            # 🎧 クイズ機能（他AIのアイデアを統合）
+            # ★変更点：リスニングクイズのプロンプトを「極めて簡潔・前置き禁止」に書き換え
             if current_q:
                 with st.expander("🎧 リスニング確認クイズ"):
                     if "quiz" not in st.session_state.tool_cache:
                         if st.button("クイズを生成する"):
                             with st.spinner("作成中..."):
                                 q_ai = genai.GenerativeModel(selected_model)
-                                st.session_state.tool_cache["quiz"] = q_ai.generate_content(f"セリフ「{current_q}」の内容を理解しているか問う3択クイズを日本語で作ってください。").text
+                                quiz_prompt = f"""
+                                以下の英語セリフに対するリスニング3択クイズを作成してください。
+                                【厳守事項】
+                                ・「はい、作成します」などの前置きや、解説は絶対に出力しないこと。
+                                ・問題文と選択肢は1文で極力短くシンプルにすること。
+                                
+                                セリフ: {current_q}
+                                
+                                【出力フォーマット】
+                                Q. （短い問題文）
+                                1. （短い選択肢）
+                                2. （短い選択肢）
+                                3. （短い選択肢）
+                                正解: （番号のみ）
+                                """
+                                st.session_state.tool_cache["quiz"] = q_ai.generate_content(quiz_prompt).text
                                 st.rerun()
                     if "quiz" in st.session_state.tool_cache:
                         st.markdown(st.session_state.tool_cache["quiz"])
@@ -320,20 +325,18 @@ if "chat_session" in st.session_state:
                 prompt = "（今の質問の意図がわかりません。新しい質問はせず、【パターンA】の形式で、自然な回答例の解説と和訳、そしてリピート練習用の回答例を提示してください。）"
                 display_prompt = "（🏳️ ギブアップしました）"
 
-    # ＝＝＝ 送信処理（スマートトリミング適用） ＝＝＝
+    # ＝＝＝ 送信処理 ＝＝＝
     if prompt and display_prompt:
         st.session_state.messages.append({"role": "user", "content": display_prompt})
-        st.session_state.tool_cache = {} # ターンが進んだらキャッシュクリア
+        st.session_state.tool_cache = {} 
         
         with st.spinner("AIが返答を考えています..."):
             try:
-                # 常に最新のシステムプロンプトと、節約した履歴で通信を行う
                 trim_model = genai.GenerativeModel(selected_model, system_instruction=system_instruction)
                 st.session_state.chat_session = trim_model.start_chat(history=get_trimmed_history()[:-1])
                 response = st.session_state.chat_session.send_message(prompt)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
                 
-                # リピート練習に入った場合はミス回数を加算
                 if "[リピート練習]" in response.text:
                     st.session_state.stats_mistakes += 1
                     

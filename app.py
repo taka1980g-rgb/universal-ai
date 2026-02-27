@@ -31,7 +31,7 @@ if "password_correct" not in st.session_state:
     st.session_state["password_correct"] = False
 
 if not st.session_state["password_correct"]:
-    st.title("🔒 家族専用 AI英会話")
+    st.title("🔒 家族専用 AI英会話ver2　テスト中")
     pwd = st.text_input("合言葉（パスワード）を入力してください", type="password")
     if pwd == APP_PASSWORD:
         st.session_state["password_correct"] = True
